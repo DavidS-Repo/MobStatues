@@ -34,9 +34,9 @@ Feel free to customize and expand on this plugin to fit your specific needs.
 4. The MobStatues plugin is now ready to use.
 
 ## Support and Contributions
-If you encounter any issues or have suggestions for improvements, please [submit an issue](link-to-issue-tracker) on the GitHub repository.
+If you encounter any issues or have suggestions for improvements, please [submit an issue](/issues) on the GitHub repository.
 
-Contributions to the development of MobStatues are welcome. If you would like to contribute, please [fork the repository](link-to-repo) and submit a pull request.
+Contributions to the development of MobStatues are welcome. If you would like to contribute, please [fork the repository](/) and submit a pull request.
 
 ## License
-This plugin is licensed under the [MIT License](link-to-license-file). Please see the LICENSE file for more information.
+This plugin is licensed under the [MIT License](LICENSE). Please see the LICENSE file for more information.
