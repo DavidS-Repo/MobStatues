@@ -16,22 +16,16 @@ import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.File;
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
+import java.util.*;
 import java.util.concurrent.atomic.AtomicInteger;
-
 
 public class MobStatues extends JavaPlugin implements TabCompleter {
 
-    private Map<UUID, Map<String, Entity>> playerStatueMap;
+    private final Map<UUID, Map<String, Entity>> playerStatueMap = new HashMap<>();
 
     @Override
     public void onEnable() {
         getLogger().info("MobStatues has been enabled!");
-        playerStatueMap = new HashMap<>();
         getCommand("ms").setTabCompleter(this);
         getCommand("msmove").setTabCompleter(this);
         loadPlayerStatuesData();
@@ -48,8 +42,7 @@ public class MobStatues extends JavaPlugin implements TabCompleter {
     public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         if (command.getName().equalsIgnoreCase("ms")) {
             if (args.length >= 2) {
-                if (sender instanceof Player) {
-                    Player player = (Player) sender;
+                if (sender instanceof Player player) {
                     String statueName = args[0].toLowerCase();
                     String entityName = args[1].toUpperCase();
 
@@ -64,8 +57,7 @@ public class MobStatues extends JavaPlugin implements TabCompleter {
             }
         } else if (command.getName().equalsIgnoreCase("msmove")) {
             if (args.length == 1) {
-                if (sender instanceof Player) {
-                    Player player = (Player) sender;
+                if (sender instanceof Player player) {
                     String statueName = args[0].toLowerCase();
 
                     moveStatue(player, statueName);
@@ -79,9 +71,7 @@ public class MobStatues extends JavaPlugin implements TabCompleter {
             }
         } else if (command.getName().equalsIgnoreCase("msdel")) {
             if (args.length == 0 || (args.length == 1 && args[0].isEmpty())) {
-                if (sender instanceof Player) {
-                    Player player = (Player) sender;
-
+                if (sender instanceof Player player) {
                     listPlayerStatues(player.getUniqueId());
                 } else {
                     sender.sendMessage("This command can only be used by players.");
@@ -133,6 +123,27 @@ public class MobStatues extends JavaPlugin implements TabCompleter {
     }
 
 
+    private void removeOldStatue(Entity statue) {
+        Location statueLocation = statue.getLocation();
+
+        // Remove the old statue using kill commands
+        String killCommand = "minecraft:kill @e[type=" + statue.getType().name().toLowerCase() + ",x=" + statueLocation.getX() + ",y=" + statueLocation.getY() + ",z=" + statueLocation.getZ() + ",distance=0]";
+        Bukkit.dispatchCommand(Bukkit.getConsoleSender(), killCommand);
+
+        // Remove the dropped items continuously for 1 tick
+        AtomicInteger duration = new AtomicInteger(1);
+        Bukkit.getScheduler().runTaskTimer(this, () -> {
+            CommandSender consoleSender = Bukkit.getConsoleSender();
+            String command = "minecraft:kill @e[type=item,x=" + statueLocation.getX() + ",y=" + statueLocation.getY() + ",z=" + statueLocation.getZ() + ",distance=..3]";
+            consoleSender.getServer().dispatchCommand(consoleSender, command);
+            int remainingTicks = duration.decrementAndGet();
+            if (remainingTicks <= 0) {
+                // Cancel the task after the desired duration
+                Bukkit.getScheduler().cancelTasks(this);
+            }
+        }, 0L, 1L); // Run every tick (0L), with an initial delay of 0 ticks and a period of 1 tick
+    }
+
     private boolean moveStatue(Player player, String statueName) {
         Map<String, Entity> playerStatues = playerStatueMap.get(player.getUniqueId());
         if (playerStatues != null) {
@@ -141,8 +152,8 @@ public class MobStatues extends JavaPlugin implements TabCompleter {
                 LivingEntity livingEntity = (LivingEntity) statue;
                 Location location = player.getLocation();
 
-                // Remove the old statue using kill commands
-                removeStatue(player, statueName);
+                // Remove the old statue
+                removeOldStatue(livingEntity);
 
                 // Create a new statue at the player's location
                 createStatue(player, statueName, livingEntity.getType().name());
@@ -156,8 +167,6 @@ public class MobStatues extends JavaPlugin implements TabCompleter {
         }
         return false;
     }
-
-
 
     private void storeStatue(UUID playerId, String statueName, Entity entity) {
         playerStatueMap.computeIfAbsent(playerId, k -> new HashMap<>()).put(statueName, entity);
@@ -178,31 +187,13 @@ public class MobStatues extends JavaPlugin implements TabCompleter {
     }
 
     private void removeStatue(CommandSender sender, String statueName) {
-        if (sender instanceof Player) {
-            Player player = (Player) sender;
+        if (sender instanceof Player player) {
             UUID playerId = player.getUniqueId();
             Map<String, Entity> playerStatues = playerStatueMap.get(playerId);
             if (playerStatues != null) {
                 Entity statue = playerStatues.remove(statueName);
                 if (statue != null) {
-                    Location statueLocation = new Location(statue.getWorld(), statue.getLocation().getX(), statue.getLocation().getY(), statue.getLocation().getZ());
-
-                    // Remove the statue entity using a kill command
-                    String killCommand = "minecraft:kill @e[type=" + statue.getType().name().toLowerCase() + ",x=" + statueLocation.getX() + ",y=" + statueLocation.getY() + ",z=" + statueLocation.getZ() + ",distance=0]";
-                    Bukkit.dispatchCommand(Bukkit.getConsoleSender(), killCommand);
-                    
-                 // Remove the dropped items continuously for 1 ticks
-                    AtomicInteger duration = new AtomicInteger(1);
-                    Bukkit.getScheduler().runTaskTimer(this, () -> {
-                    	CommandSender consoleSender = Bukkit.getConsoleSender();
-                    	String command = "minecraft:kill @e[type=item,x=" + statueLocation.getX() + ",y=" + statueLocation.getY() + ",z=" + statueLocation.getZ() + ",distance=..3]";
-                    	consoleSender.getServer().dispatchCommand(consoleSender, command);
-                        int remainingTicks = duration.decrementAndGet();
-                        if (remainingTicks <= 0) {
-                            // Cancel the task after the desired duration
-                            Bukkit.getScheduler().cancelTasks(this);
-                        }
-                    }, 0L, 1L); // Run every tick (0L), with an initial delay of 0 ticks and a period of 1 tick
+                    removeOldStatue(statue); // Use the new removeOldStatue method
 
                     // Remove the statue entry from the player's YAML file
                     File playersDataFolder = new File(getDataFolder(), "players");
@@ -231,6 +222,7 @@ public class MobStatues extends JavaPlugin implements TabCompleter {
             sender.sendMessage("This command can only be used by players.");
         }
     }
+
 
     private void listPlayerStatues(UUID playerId) {
         Map<String, Entity> playerStatues = playerStatueMap.get(playerId);
@@ -266,24 +258,22 @@ public class MobStatues extends JavaPlugin implements TabCompleter {
         }
 
         // Load statues data for each player
-        File[] playerDataFiles = playersDataFolder.listFiles();
+        File[] playerDataFiles = playersDataFolder.listFiles((dir, name) -> name.endsWith(".yml"));
         if (playerDataFiles != null) {
             for (File playerDataFile : playerDataFiles) {
-                if (playerDataFile.isFile() && playerDataFile.getName().endsWith(".yml")) {
-                    String playerName =playerDataFile.getName().replace(".yml", "");
-                    UUID playerId = UUID.fromString(playerName);
-                    FileConfiguration playerDataConfig = YamlConfiguration.loadConfiguration(playerDataFile);
-                    ConfigurationSection statuesSection = playerDataConfig.getConfigurationSection("statues");
-                    if (statuesSection != null) {
-                        Map<String, Entity> playerStatues = new HashMap<>();
-                        for (String statueName : statuesSection.getKeys(false)) {
-                            Entity statue = loadStatueFromConfig(playerId, statueName, statuesSection.getConfigurationSection(statueName));
-                            if (statue != null) {
-                                playerStatues.put(statueName, statue);
-                            }
+                String playerName = playerDataFile.getName().replace(".yml", "");
+                UUID playerId = UUID.fromString(playerName);
+                FileConfiguration playerDataConfig = YamlConfiguration.loadConfiguration(playerDataFile);
+                ConfigurationSection statuesSection = playerDataConfig.getConfigurationSection("statues");
+                if (statuesSection != null) {
+                    Map<String, Entity> playerStatues = new HashMap<>();
+                    for (String statueName : statuesSection.getKeys(false)) {
+                        Entity statue = loadStatueFromConfig(playerId, statueName, statuesSection.getConfigurationSection(statueName));
+                        if (statue != null) {
+                            playerStatues.put(statueName, statue);
                         }
-                        playerStatueMap.put(playerId, playerStatues);
                     }
+                    playerStatueMap.put(playerId, playerStatues);
                 }
             }
         }
@@ -332,8 +322,8 @@ public class MobStatues extends JavaPlugin implements TabCompleter {
             ConfigurationSection statuesSection = playerDataConfig.createSection("statues");
             for (String statueName : playerStatues.keySet()) {
                 Entity statue = playerStatues.get(statueName);
-                if (statue != null && statue instanceof LivingEntity) {
-                    saveStatueToConfig((LivingEntity) statue, statuesSection.createSection(statueName));
+                if (statue != null && statue instanceof LivingEntity livingEntity) {
+                    saveStatueToConfig(livingEntity, statuesSection.createSection(statueName));
                 }
             }
 
@@ -355,7 +345,6 @@ public class MobStatues extends JavaPlugin implements TabCompleter {
         statueSection.set("pitch", entity.getLocation().getPitch());
         statueSection.set("entityType", entity.getType().name());
     }
-
 
     @Override
     public List<String> onTabComplete(CommandSender sender, Command command, String alias, String[] args) {
@@ -389,8 +378,7 @@ public class MobStatues extends JavaPlugin implements TabCompleter {
             }
         } else if (command.getName().equalsIgnoreCase("msdel")) {
             if (args.length == 0 || (args.length == 1 && args[0].isEmpty())) {
-                if (sender instanceof Player) {
-                    Player player = (Player) sender;
+                if (sender instanceof Player player) {
                     UUID playerId = player.getUniqueId();
                     Map<String, Entity> playerStatues = playerStatueMap.get(playerId);
                     if (playerStatues != null) {
@@ -428,5 +416,4 @@ public class MobStatues extends JavaPlugin implements TabCompleter {
 
         return completions;
     }
-
 }
