@@ -34,7 +34,7 @@ Feel free to customize and expand on this plugin to fit your specific needs.
 4. The MobStatues plugin is now ready to use.
 
 ## Support and Contributions
-If you encounter any issues or have suggestions for improvements, please [submit an issue] on the GitHub repository.
+If you encounter any issues or have suggestions for improvements, please submit an issue on the GitHub repository.
 
 Contributions to the development of MobStatues are welcome. If you would like to contribute, please [fork the repository](/) and submit a pull request.
 
