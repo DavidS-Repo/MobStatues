@@ -36,7 +36,7 @@ Feel free to customize and expand on this plugin to fit your specific needs.
 ## Support and Contributions
 If you encounter any issues or have suggestions for improvements, please submit an issue on the GitHub repository.
 
-Contributions to the development of MobStatues are welcome. If you would like to contribute, please [fork the repository](/) and submit a pull request.
+Contributions to the development of MobStatues are welcome. If you encounter any issues or have suggestions for improvements, please create a new issue on the [GitHub repository](https://github.com/DavidS-Repo/MobStatues/issues)
 
 ## License
 This plugin is licensed under the [MIT License](LICENSE). Please see the LICENSE file for more information.
