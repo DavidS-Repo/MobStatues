@@ -1,7 +1,7 @@
 # MobStatues Plugin
 
 ## Summary
-MobStatues is a powerful plugin that allows players to create and manage decorative mob statues in Minecraft. With MobStatues, you can transform mobs into stunning statues, customize their appearance, and place them as decorative elements in your world.
+MobStatues is a powerful Minecraft plugin that allows players to create and manage decorative mob statues in Minecraft. With MobStatues, you can transform mobs into stunning statues, customize their appearance, and place them as decorative elements in your world.
 
 ## Description
 MobStatues is a feature-rich plugin designed to enhance your Minecraft experience by enabling you to create and manage decorative mob statues. With MobStatues, you have the ability to turn any mob into an eye-catching statue, customize its properties, and position it as a captivating decoration in your world.
