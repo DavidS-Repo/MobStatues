@@ -18,6 +18,7 @@ MobStatues also provides a comprehensive permission system to give you fine-grai
 - `mobstatues.create`: Allows players to create mob statues.
 - `mobstatues.edit`: Allows players to edit mob statues.
 - `mobstatues.remove`: Allows players to remove mob statues.
+- `mobstatues.adjust`: Allows players to adjust the position, rotation, and pitch of a mob statue
 - `mobstatues.*`: Grants access to all MobStatues permissions.
 
 ## Usage
