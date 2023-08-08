@@ -1,6 +1,7 @@
 package main;
 
 import org.bukkit.Bukkit;
+import org.bukkit.Chunk;
 import org.bukkit.Location;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
@@ -8,24 +9,29 @@ import org.bukkit.command.TabCompleter;
 import org.bukkit.configuration.ConfigurationSection;
 import org.bukkit.configuration.file.FileConfiguration;
 import org.bukkit.configuration.file.YamlConfiguration;
+import org.bukkit.entity.ArmorStand;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.EntityType;
 import org.bukkit.entity.LivingEntity;
 import org.bukkit.entity.Player;
+import org.bukkit.event.EventHandler;
+import org.bukkit.event.Listener;
+import org.bukkit.event.entity.ItemSpawnEvent;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.io.File;
 import java.io.IOException;
 import java.util.*;
-import java.util.concurrent.atomic.AtomicInteger;
 
 
-public class MobStatues extends JavaPlugin implements TabCompleter {
+public class MobStatues extends JavaPlugin implements Listener, TabCompleter {
 
 	private final Map<UUID, Map<String, Entity>> playerStatueMap = new HashMap<>();
+	private boolean preventItemDrops = false;
 
 	@Override
 	public void onEnable() {
+		getServer().getPluginManager().registerEvents(this, this);
 		getLogger().info("MobStatues has been enabled!");
 		getCommand("ms").setTabCompleter(this);
 		getCommand("msmove").setTabCompleter(this);
@@ -37,7 +43,7 @@ public class MobStatues extends JavaPlugin implements TabCompleter {
 	@Override
 	public void onDisable() {
 		getLogger().info("MobStatues has been disabled!");
-		removeStatues();
+		removeAllStatues();
 		savePlayerStatuesData();
 	}
 
@@ -48,7 +54,6 @@ public class MobStatues extends JavaPlugin implements TabCompleter {
 				if (sender instanceof Player player) {
 					String statueName = args[0].toLowerCase();
 					String entityName = args[1].toUpperCase();
-
 					createStatue(player, statueName, entityName);
 				} else {
 					sender.sendMessage("This command can only be used by players.");
@@ -62,7 +67,6 @@ public class MobStatues extends JavaPlugin implements TabCompleter {
 			if (args.length == 1) {
 				if (sender instanceof Player player) {
 					String statueName = args[0].toLowerCase();
-
 					moveStatue(player, statueName);
 				} else {
 					sender.sendMessage("This command can only be used by players.");
@@ -82,7 +86,6 @@ public class MobStatues extends JavaPlugin implements TabCompleter {
 				return true;
 			} else if (args.length == 1) {
 				String statueName = args[0].toLowerCase();
-
 				removeStatue(sender, statueName);
 				return true;
 			} else {
@@ -94,7 +97,6 @@ public class MobStatues extends JavaPlugin implements TabCompleter {
 				if (sender instanceof Player player) {
 					String statueName = args[0].toLowerCase();
 					double yaw, pitch;
-
 					try {
 						yaw = Double.parseDouble(args[1]);
 						pitch = Double.parseDouble(args[2]);
@@ -102,7 +104,6 @@ public class MobStatues extends JavaPlugin implements TabCompleter {
 						player.sendMessage("Invalid yaw or pitch value. Please provide valid numbers.");
 						return true;
 					}
-
 					adjustStatue(player, statueName, yaw, pitch);
 				} else {
 					sender.sendMessage("This command can only be used by players.");
@@ -121,28 +122,47 @@ public class MobStatues extends JavaPlugin implements TabCompleter {
 		if (playerStatues != null) {
 			Entity statue = playerStatues.get(statueName);
 			if (statue instanceof LivingEntity) {
-				LivingEntity livingEntity = (LivingEntity) statue;
+				// Remove the existing statue using the removeStatue method
+				removeStatue(player.getUniqueId(), statueName);
 
-				// Get the statue's location data from the file
+				Location entityLocation = statue.getLocation();
+
+				// Remove the old entity and its passengers
+				removeOldEntity(statue);
+
+				// Spawn a new entity with the updated pitch and yaw
+				LivingEntity newEntity = (LivingEntity) entityLocation.getWorld().spawnEntity(entityLocation, statue.getType());
+				newEntity.setAI(false);
+				newEntity.setCollidable(false);
+				newEntity.setGravity(false);
+				newEntity.setInvulnerable(true);
+				newEntity.setSilent(true);
+
+				// Set the new pitch and yaw
+				newEntity.teleport(new Location(newEntity.getWorld(), entityLocation.getX(), entityLocation.getY(), entityLocation.getZ(), (float) yaw, (float) pitch));
+
+				// Set the custom name of the new entity to match the old entity's custom name
+				newEntity.setCustomName(statue.getCustomName());
+				newEntity.setCustomNameVisible(true);
+
+				// Create an invisible armor stand as a passenger to the new entity
+				ArmorStand newArmorStand = entityLocation.getWorld().spawn(entityLocation, ArmorStand.class);
+				newArmorStand.setInvisible(true);
+				newArmorStand.setMarker(true);
+				newEntity.addPassenger(newArmorStand);
+
+				// Update the entity in the map
+				playerStatues.put(statueName, newEntity);
+
+				// Update the pitch and yaw in the configuration file
 				File playersDataFolder = new File(getDataFolder(), "players");
 				File playerDataFile = new File(playersDataFolder, player.getUniqueId().toString() + ".yml");
 				if (playerDataFile.exists()) {
 					FileConfiguration playerDataConfig = YamlConfiguration.loadConfiguration(playerDataFile);
 					ConfigurationSection statuesSection = playerDataConfig.getConfigurationSection("statues");
-					removeOldStatue(statue);
 					if (statuesSection != null) {
 						ConfigurationSection statueData = statuesSection.getConfigurationSection(statueName);
 						if (statueData != null) {
-							double x = statueData.getDouble("x");
-							double y = statueData.getDouble("y");
-							double z = statueData.getDouble("z");
-
-							// Use the /minecraft:tp command to update the pitch and yaw of the statue
-							String tpCommand = "minecraft:summon minecraft:" + livingEntity.getType().name().toLowerCase()
-									+ " " + x + " " + y + " " + z + " {Invulnerable:1b,NoAI:1b,NoGravity:1b,OnGround:1b,PersistenceRequired:1b,Silent:1b,Rotation:[" + yaw + "f," + pitch + "f]}";
-							player.performCommand(tpCommand);
-
-							// Update the pitch and yaw in the file
 							statueData.set("yaw", yaw);
 							statueData.set("pitch", pitch);
 							try {
@@ -167,6 +187,15 @@ public class MobStatues extends JavaPlugin implements TabCompleter {
 		}
 	}
 
+	private void removeOldEntity(Entity entity) {
+		if (entity != null) {
+			// Remove the entity and its passengers
+			for (Entity passenger : entity.getPassengers()) {
+				passenger.remove();
+			}
+			entity.remove();
+		}
+	}
 
 	private void createStatue(Player player, String statueName, String entityName) {
 		// Remove the player's existing statue with the same name, if any
@@ -191,6 +220,17 @@ public class MobStatues extends JavaPlugin implements TabCompleter {
 		entity.setGravity(false);
 		entity.setSilent(true);
 
+		// Generate and set the custom name for the entity
+		String customName = generateRandomName();
+		entity.setCustomName(customName);
+		entity.setCustomNameVisible(false); // Hide the custom name by default
+
+		// Create an invisible armor stand as a passenger to the entity
+		ArmorStand armorStand = location.getWorld().spawn(location, ArmorStand.class);
+		armorStand.setInvisible(true);
+		armorStand.setMarker(true);
+		entity.addPassenger(armorStand);
+
 		// Store the statue in the map
 		storeStatue(player.getUniqueId(), statueName, entity);
 
@@ -201,25 +241,28 @@ public class MobStatues extends JavaPlugin implements TabCompleter {
 	}
 
 
+
 	private void removeOldStatue(Entity statue) {
-		Location statueLocation = statue.getLocation();
+		if (statue != null) {
+			// Set the flag to prevent item drops
+			preventItemDrops = true;
 
-		// Remove the old statue using kill commands
-		String killCommand = "minecraft:kill @e[type=" + statue.getType().name().toLowerCase() + ",x=" + statueLocation.getX() + ",y=" + statueLocation.getY() + ",z=" + statueLocation.getZ() + ",distance=0]";
-		Bukkit.dispatchCommand(Bukkit.getConsoleSender(), killCommand);
+			// Remove the statue using kill command
+			String customName = statue.getCustomName();
+			String killCommand = "minecraft:kill @e[name=" + customName + "]";
+			Bukkit.dispatchCommand(Bukkit.getConsoleSender(), killCommand);
 
-		// Remove the dropped items continuously for 1 tick
-		AtomicInteger duration = new AtomicInteger(1);
-		Bukkit.getScheduler().runTaskTimer(this, () -> {
-			CommandSender consoleSender = Bukkit.getConsoleSender();
-			String command = "minecraft:kill @e[type=item,x=" + statueLocation.getX() + ",y=" + statueLocation.getY() + ",z=" + statueLocation.getZ() + ",distance=..3]";
-			consoleSender.getServer().dispatchCommand(consoleSender, command);
-			int remainingTicks = duration.decrementAndGet();
-			if (remainingTicks <= 0) {
-				// Cancel the task after the desired duration
-				Bukkit.getScheduler().cancelTasks(this);
-			}
-		}, 0L, 1L); // Run every tick (0L), with an initial delay of 0 ticks and a period of 1 tick
+			// Reset the flag to allow item drops
+			preventItemDrops = false;
+		}
+	}
+
+	@EventHandler
+	public void onItemSpawn(ItemSpawnEvent event) {
+		// Prevent the dropped item from spawning if the flag is true
+		if (preventItemDrops) {
+			event.setCancelled(true);
+		}
 	}
 
 	private boolean moveStatue(Player player, String statueName) {
@@ -239,6 +282,11 @@ public class MobStatues extends JavaPlugin implements TabCompleter {
 				if (newStatue != null && newStatue instanceof LivingEntity) {
 					LivingEntity newLivingEntity = (LivingEntity) newStatue;
 					newLivingEntity.teleport(location);
+
+					// Set the custom name of the new entity to match the old entity's custom name
+					newLivingEntity.setCustomName(livingEntity.getCustomName());
+					newLivingEntity.setCustomNameVisible(true);
+
 					return true;
 				}
 			}
@@ -246,59 +294,79 @@ public class MobStatues extends JavaPlugin implements TabCompleter {
 		return false;
 	}
 
+	private void removeAllStatues() {
+		for (Map<String, Entity> playerStatues : playerStatueMap.values()) {
+			for (Entity statue : playerStatues.values()) {
+				statue.remove();
+			}
+		}
+		playerStatueMap.clear();
+	}
+
 	private void storeStatue(UUID playerId, String statueName, Entity entity) {
 		playerStatueMap.computeIfAbsent(playerId, k -> new HashMap<>()).put(statueName, entity);
 	}
 
-	private boolean removeStatue(UUID playerId, String statueName) {
+	private void removeStatue(UUID playerId, String statueName) {
 		Map<String, Entity> playerStatues = playerStatueMap.get(playerId);
 		if (playerStatues != null) {
 			Entity statue = playerStatues.remove(statueName);
 			if (statue != null) {
-				statue.remove();
-				// Save the player's statues data to file
-				savePlayerStatuesData();
-				return true;
+				removeOldStatue(statue);
 			}
 		}
-		return false;
 	}
 
 	private void removeStatue(CommandSender sender, String statueName) {
-		if (sender instanceof Player player) {
-			UUID playerId = player.getUniqueId();
-			Map<String, Entity> playerStatues = playerStatueMap.get(playerId);
-			if (playerStatues != null) {
-				Entity statue = playerStatues.remove(statueName);
-				if (statue != null) {
-					removeOldStatue(statue); // Use the new removeOldStatue method
-
-					// Remove the statue entry from the player's YAML file
-					File playersDataFolder = new File(getDataFolder(), "players");
-					File playerDataFile = new File(playersDataFolder, playerId.toString() + ".yml");
-					if (playerDataFile.exists()) {
-						FileConfiguration playerDataConfig = YamlConfiguration.loadConfiguration(playerDataFile);
-						ConfigurationSection statuesSection = playerDataConfig.getConfigurationSection("statues");
-						if (statuesSection != null) {
-							statuesSection.set(statueName, null);
-							try {
-								playerDataConfig.save(playerDataFile);
-							} catch (IOException e) {
-								getLogger().warning("Failed to save player data for player " + playerId.toString());
-								e.printStackTrace();
-							}
-						}
-					}
-					sender.sendMessage("Statue '" + statueName + "' removed.");
-				} else {
-					sender.sendMessage("You don't have a statue named '" + statueName + "'.");
-				}
-			} else {
-				sender.sendMessage("You don't have any statues.");
-			}
-		} else {
+		if (!(sender instanceof Player player)) {
 			sender.sendMessage("This command can only be used by players.");
+			return;
 		}
+
+		UUID playerId = player.getUniqueId();
+		Map<String, Entity> playerStatues = playerStatueMap.get(playerId);
+
+		if (playerStatues == null) {
+			sender.sendMessage("You don't have any statues.");
+			return;
+		}
+
+		Entity statue = playerStatues.remove(statueName);
+		if (statue == null) {
+			sender.sendMessage("You don't have a statue named '" + statueName + "'.");
+			return;
+		}
+
+		Location statueLocation = statue.getLocation();
+		Chunk chunk = statueLocation.getChunk();
+
+		if (!chunk.isLoaded()) {
+			sender.sendMessage("Warning: The chunk containing the statue is not loaded. The statue will not be removed.");
+			return;
+		}
+
+		removeOldStatue(statue);
+
+		File playersDataFolder = new File(getDataFolder(), "players");
+		File playerDataFile = new File(playersDataFolder, playerId.toString() + ".yml");
+
+		if (playerDataFile.exists()) {
+			FileConfiguration playerDataConfig = YamlConfiguration.loadConfiguration(playerDataFile);
+			ConfigurationSection statuesSection = playerDataConfig.getConfigurationSection("statues");
+
+			if (statuesSection != null) {
+				statuesSection.set(statueName, null);
+
+				try {
+					playerDataConfig.save(playerDataFile);
+				} catch (IOException e) {
+					getLogger().warning("Failed to save player data for player " + playerId.toString());
+					e.printStackTrace();
+				}
+			}
+		}
+
+		sender.sendMessage("Statue '" + statueName + "' removed.");
 	}
 
 
@@ -318,15 +386,6 @@ public class MobStatues extends JavaPlugin implements TabCompleter {
 				player.sendMessage("You don't have any statues.");
 			}
 		}
-	}
-
-	private void removeStatues() {
-		for (Map<String, Entity> playerStatues : playerStatueMap.values()) {
-			for (Entity statue : playerStatues.values()) {
-				statue.remove();
-			}
-		}
-		playerStatueMap.clear();
 	}
 
 	private void loadPlayerStatuesData() {
@@ -351,9 +410,42 @@ public class MobStatues extends JavaPlugin implements TabCompleter {
 							playerStatues.put(statueName, statue);
 						}
 					}
+
+					// Check if the entityName field is missing and generate a random name if needed
+					if (updateStatueData(playerDataConfig, playerStatues)) {
+						File specificPlayerDataFile = new File(playersDataFolder, playerName + ".yml");
+						savePlayerData(specificPlayerDataFile, playerDataConfig);
+					}
+
 					playerStatueMap.put(playerId, playerStatues);
 				}
 			}
+		}
+	}
+
+	private boolean updateStatueData(FileConfiguration playerDataConfig, Map<String, Entity> playerStatues) {
+		boolean hasUpdates = false;
+		for (String statueName : playerStatues.keySet()) {
+			ConfigurationSection statueSection = playerDataConfig.getConfigurationSection("statues." + statueName);
+			if (statueSection != null && !statueSection.contains("entityName")) {
+				// Generate a random name (16 characters long) for the statue and save it in the config
+				String randomName = generateRandomName();
+				statueSection.set("entityName", randomName);
+				hasUpdates = true;
+
+				// Add debugging output to check the process
+				getLogger().info("Added random name '" + randomName + "' for statue: " + statueName);
+			}
+		}
+		return hasUpdates;
+	}
+
+	private void savePlayerData(File playerDataFile, FileConfiguration playerDataConfig) {
+		try {
+			playerDataConfig.save(playerDataFile);
+		} catch (IOException e) {
+			getLogger().warning("Failed to save player data for file: " + playerDataFile.getName());
+			e.printStackTrace();
 		}
 	}
 
@@ -379,9 +471,42 @@ public class MobStatues extends JavaPlugin implements TabCompleter {
 			entity.setCollidable(false);
 			entity.setGravity(false);
 			entity.setSilent(true);
+
+			// Load and set the custom name from the file
+			String customNameKey = "entityName";
+			String customName = statueSection.getString(customNameKey);
+			if (customName == null || customName.isEmpty()) {
+				customName = generateRandomName();
+				statueSection.set(customNameKey, customName);
+
+				// Save the changes back to the specific player's data file
+				File playersDataFolder = new File(getDataFolder(), "players");
+				File playerDataFile = new File(playersDataFolder, playerId + ".yml");
+				if (playerDataFile.exists()) {
+					FileConfiguration playerDataConfig = YamlConfiguration.loadConfiguration(playerDataFile);
+					try {
+						playerDataConfig.set("statues." + statueName + "." + customNameKey, customName);
+						playerDataConfig.save(playerDataFile);
+					} catch (IOException e) {
+						getLogger().warning("Failed to save player data for player " + playerId.toString());
+						e.printStackTrace();
+					}
+				}
+			}
+
+			entity.setCustomName(customName);
+			entity.setCustomNameVisible(true);
+
+			// Create an invisible armor stand as a passenger to the entity
+			ArmorStand armorStand = location.getWorld().spawn(location, ArmorStand.class);
+			armorStand.setInvisible(true);
+			armorStand.setMarker(true);
+			entity.addPassenger(armorStand);
+
+			return entity;
 		}
 
-		return entity;
+		return null;
 	}
 
 	private void savePlayerStatuesData() {
@@ -422,6 +547,22 @@ public class MobStatues extends JavaPlugin implements TabCompleter {
 		statueSection.set("yaw", entity.getLocation().getYaw());
 		statueSection.set("pitch", entity.getLocation().getPitch());
 		statueSection.set("entityType", entity.getType().name());
+
+		// Save the custom name to the file
+		if (entity.getCustomName() != null) {
+			statueSection.set("entityName", entity.getCustomName());
+		}
+	}
+
+	private String generateRandomName() {
+		String characters = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+		Random random = new Random();
+		StringBuilder builder = new StringBuilder();
+		for (int i = 0; i < 16; i++) {
+			int index = random.nextInt(characters.length());
+			builder.append(characters.charAt(index));
+		}
+		return builder.toString();
 	}
 
 	@Override
@@ -507,3 +648,4 @@ public class MobStatues extends JavaPlugin implements TabCompleter {
 		return completions;
 	}
 }
+
