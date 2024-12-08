@@ -1,0 +1,44 @@
+name: MobStatues
+version: 1.21.4
+main: main.MobStatues
+author: Go0fy_Go0ber
+description: Create and manage decorative mob statues
+api-version: 1.21.4
+commands:
+  ms:
+    description: Create or manage a mob statue
+    usage: /ms <name> <entity name>
+    example: /ms mystatue creeper
+  msmove:
+    description: Move a mob statue to your current location
+    usage: /msmove <name>
+    example: /msmove mystatue
+  msdel:
+    description: List or remove a mob statue
+    usage: /msdel [statue name]
+    example: /msdel mystatue
+  msadjust:
+    description: Adjust the position, rotation, and pitch of a mob statue
+    usage: /msadjust <name> <rotation> <pitch>
+    example: /msadjust mystatue 90 45
+permissions:
+  mobstatues.create:
+    description: Allows players to create mob statues
+    default: true
+  mobstatues.edit:
+    description: Allows players to edit mob statues
+    default: true
+  mobstatues.remove:
+    description: Allows players to remove mob statues
+    default: true
+  mobstatues.adjust:
+    description: Allows players to adjust the position, rotation, and pitch of a mob statue
+    default: true
+  mobstatues.*:
+    description: Grants access to all MobStatues permissions
+    default: op
+    children:
+      mobstatues.create: true
+      mobstatues.edit: true
+      mobstatues.remove: true
+      mobstatues.adjust: true
