@@ -4,9 +4,9 @@
 MobStatues is a simple plugin that lets you turn standard mobs into decorative statues. Place and position these statues anywhere in your world to add unique visual elements. It’s perfect for builders looking to enhance their creations with static, life-like figures.
 
 <div style="display: flex; flex-wrap: wrap; gap: 10px;">
-    <img src="https://www.toolsnexus.com/mc/1.jpeg" alt="Sample Image 1" style="width: 33%; height: auto; border: 1px solid #ddd; border-radius: 5px;"/>
-    <img src="https://www.toolsnexus.com/mc/3.jpeg" alt="Sample Image 2" style="width: 33%; height: auto; border: 1px solid #ddd; border-radius: 5px;"/>
-    <img src="https://www.toolsnexus.com/mc/4.jpeg" alt="Sample Image 3" style="width: 33%; height: auto; border: 1px solid #ddd; border-radius: 5px;"/>
+    <img src="https://www.toolsnexus.com/mc/1.jpeg" alt="Sample Image 1" style="width: 30%; height: auto; border: 1px solid #ddd; border-radius: 5px;"/>
+    <img src="https://www.toolsnexus.com/mc/3.jpeg" alt="Sample Image 2" style="width: 30%; height: auto; border: 1px solid #ddd; border-radius: 5px;"/>
+    <img src="https://www.toolsnexus.com/mc/4.jpeg" alt="Sample Image 3" style="width: 30%; height: auto; border: 1px solid #ddd; border-radius: 5px;"/>
 </div>
 
 ## Commands
