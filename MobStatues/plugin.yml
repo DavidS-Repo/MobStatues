@@ -1,9 +1,9 @@
 name: MobStatues
-version: 1.21.4
+version: 1.21.11
 main: main.MobStatues
 author: Go0fy_Go0ber
 description: Create and manage decorative mob statues
-api-version: 1.21.4
+api-version: 1.21.11
 commands:
   ms:
     description: Create or manage a mob statue
@@ -41,4 +41,5 @@ permissions:
       mobstatues.create: true
       mobstatues.edit: true
       mobstatues.remove: true
+
       mobstatues.adjust: true
