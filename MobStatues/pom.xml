@@ -2,7 +2,7 @@
   <modelVersion>4.0.0</modelVersion>
   <groupId>MobStatues</groupId>
   <artifactId>MobStatues</artifactId>
-  <version>1.21.4</version>
+  <version>1.21.11</version>
   <name>MobStatues</name>
   <description>Create and manage decorative mob statues in Minecraft
 </description>
@@ -20,7 +20,7 @@
 		<dependency>
 			<groupId>org.spigotmc</groupId>
 			<artifactId>spigot-api</artifactId>
-			<version>1.20.6-R0.1-SNAPSHOT</version>
+			<version>1.20.11-R0.1-SNAPSHOT</version>
 			<scope>provided</scope>
 		</dependency>
 		<dependency>
@@ -97,4 +97,5 @@
 			</plugin>
 		</plugins>
 	</build>
+
 </project>
