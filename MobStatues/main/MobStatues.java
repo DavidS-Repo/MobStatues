@@ -19,61 +19,32 @@ import org.bukkit.entity.ArmorStand;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.EntityType;
 import org.bukkit.entity.LivingEntity;
+import org.bukkit.entity.Mob;
 import org.bukkit.entity.Player;
+import org.bukkit.entity.Projectile;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
+import org.bukkit.event.entity.EntityDamageByEntityEvent;
+import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityDeathEvent;
 import org.bukkit.event.entity.ItemSpawnEvent;
 import org.bukkit.persistence.PersistentDataContainer;
 import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.plugin.java.JavaPlugin;
+import org.bukkit.util.Vector;
 
 import java.io.File;
 import java.io.IOException;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 
-/**
- * A plugin that allows players to create, manage, and manipulate "mob statues."
- * These statues are special, non-interactive LivingEntities that are locked in
- * place and can be arranged by players. The plugin stores statue information
- * persistently and supports various commands for creating, moving, adjusting,
- * and deleting these statues.
- */
 public class MobStatues extends JavaPlugin implements Listener, TabCompleter {
-
-	/**
-	 * The primary data structure storing statues. Keyed by player UUID broken down
-	 * into two longs (msb, lsb), then by statue name, returning the associated entity.
-	 */
 	private final Long2ObjectOpenHashMap<Long2ObjectOpenHashMap<Object2ObjectOpenHashMap<String, Entity>>> playerStatueMap = new Long2ObjectOpenHashMap<>();
-
-	/**
-	 * A secondary lookup map that associates a statue's unique ID with the player's UUID
-	 * and the statue's name. This allows quick retrieval of statue ownership and name
-	 * by an internal ID, used for event handling and data consistency.
-	 */
 	private final Object2ObjectOpenHashMap<String, StatueInfo> statueLookupMap = new Object2ObjectOpenHashMap<>();
-
-	/**
-	 * Indicates whether item drops should be prevented, used when removing statues
-	 * to ensure no unwanted drops occur.
-	 */
+	private final Object2ObjectOpenHashMap<String, Location> statueHomeLocationMap = new Object2ObjectOpenHashMap<>();
 	private boolean preventItemDrops = false;
-
-	/**
-	 * A character set used for generating random IDs for statues.
-	 */
 	private static final char[] CHARACTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789".toCharArray();
-
-	/**
-	 * A ThreadLocal builder for efficient random name generation.
-	 */
 	private static final ThreadLocal<StringBuilder> NAME_BUILDER = ThreadLocal.withInitial(() -> new StringBuilder(16));
-
-	/**
-	 * A NamespacedKey used for storing the statue ID inside an entity's PersistentDataContainer.
-	 */
 	private NamespacedKey STATUE_ID_KEY;
 
 	@Override
@@ -95,38 +66,18 @@ public class MobStatues extends JavaPlugin implements Listener, TabCompleter {
 		savePlayerStatuesData();
 	}
 
-	/**
-	 * Extracts the most significant bits of a UUID.
-	 * @param uuid The UUID to extract from.
-	 * @return The most significant bits as a long.
-	 */
 	private static long getMsb(UUID uuid) {
 		return uuid.getMostSignificantBits();
 	}
 
-	/**
-	 * Extracts the least significant bits of a UUID.
-	 * @param uuid The UUID to extract from.
-	 * @return The least significant bits as a long.
-	 */
 	private static long getLsb(UUID uuid) {
 		return uuid.getLeastSignificantBits();
 	}
 
-	/**
-	 * Ensures the existence of the secondary map keyed by msb (for a player's UUID).
-	 * @param msb The most significant bits of a player's UUID.
-	 * @return The second-level map corresponding to msb.
-	 */
 	private Long2ObjectOpenHashMap<Object2ObjectOpenHashMap<String, Entity>> getOrCreateSecondMap(long msb) {
 		return playerStatueMap.computeIfAbsent(msb, k -> new Long2ObjectOpenHashMap<>());
 	}
 
-	/**
-	 * Ensures and retrieves the statue map for a given player.
-	 * @param playerId The UUID of the player.
-	 * @return A map of statue name to statue Entity.
-	 */
 	private Object2ObjectOpenHashMap<String, Entity> getOrCreatePlayerStatues(UUID playerId) {
 		long msb = getMsb(playerId);
 		long lsb = getLsb(playerId);
@@ -134,17 +85,19 @@ public class MobStatues extends JavaPlugin implements Listener, TabCompleter {
 		return secondMap.computeIfAbsent(lsb, k -> new Object2ObjectOpenHashMap<>());
 	}
 
-	/**
-	 * Retrieves the statue map for a given player.
-	 * @param playerId The UUID of the player.
-	 * @return The player's statue map or null if none found.
-	 */
 	private Object2ObjectOpenHashMap<String, Entity> getPlayerStatues(UUID playerId) {
 		long msb = getMsb(playerId);
 		long lsb = getLsb(playerId);
 		Long2ObjectOpenHashMap<Object2ObjectOpenHashMap<String, Entity>> secondMap = playerStatueMap.get(msb);
 		if (secondMap == null) return null;
 		return secondMap.get(lsb);
+	}
+
+	private boolean isBaitStatueType(EntityType type) {
+		return type == EntityType.ENDERMITE
+				|| type == EntityType.IRON_GOLEM
+				|| type == EntityType.SNOW_GOLEM
+				|| type == EntityType.VILLAGER;
 	}
 
 	@Override
@@ -218,13 +171,6 @@ public class MobStatues extends JavaPlugin implements Listener, TabCompleter {
 		return false;
 	}
 
-	/**
-	 * Adjusts the rotation of an existing statue for a player and updates its data.
-	 * @param player The player who owns the statue.
-	 * @param statueName The name of the statue.
-	 * @param yaw The new yaw angle.
-	 * @param pitch The new pitch angle.
-	 */
 	private void adjustStatue(Player player, String statueName, double yaw, double pitch) {
 		Object2ObjectOpenHashMap<String, Entity> playerStatues = getPlayerStatues(player.getUniqueId());
 		if (playerStatues != null) {
@@ -232,11 +178,23 @@ public class MobStatues extends JavaPlugin implements Listener, TabCompleter {
 			if (statue instanceof LivingEntity) {
 				String statueId = getStatueId(statue);
 				removeStatue(player.getUniqueId(), statueName);
+
 				Location entityLocation = statue.getLocation();
 				removeOldEntity(statue);
+
 				LivingEntity newEntity = (LivingEntity) entityLocation.getWorld().spawnEntity(entityLocation, statue.getType());
 				setupStatueEntity(newEntity, statueId);
-				newEntity.teleport(new Location(newEntity.getWorld(), entityLocation.getX(), entityLocation.getY(), entityLocation.getZ(), (float) yaw, (float) pitch));
+
+				newEntity.teleport(new Location(
+						newEntity.getWorld(),
+						entityLocation.getX(),
+						entityLocation.getY(),
+						entityLocation.getZ(),
+						(float) yaw,
+						(float) pitch
+						));
+				statueHomeLocationMap.put(statueId, newEntity.getLocation().clone());
+
 				getOrCreatePlayerStatues(player.getUniqueId()).put(statueName, newEntity);
 				statueLookupMap.put(statueId, new StatueInfo(player.getUniqueId(), statueName));
 
@@ -270,10 +228,6 @@ public class MobStatues extends JavaPlugin implements Listener, TabCompleter {
 		}
 	}
 
-	/**
-	 * Removes passengers and despawns an entity cleanly.
-	 * @param entity The entity to remove.
-	 */
 	private void removeOldEntity(Entity entity) {
 		if (entity != null) {
 			for (Entity passenger : entity.getPassengers()) {
@@ -283,12 +237,6 @@ public class MobStatues extends JavaPlugin implements Listener, TabCompleter {
 		}
 	}
 
-	/**
-	 * Creates a new statue for a player with a given name and entity type.
-	 * @param player The player creating the statue.
-	 * @param statueName The name of the statue.
-	 * @param entityName The type of entity to spawn as a statue.
-	 */
 	private void createStatue(Player player, String statueName, String entityName) {
 		removeStatue(player.getUniqueId(), statueName);
 		EntityType entityType;
@@ -299,7 +247,7 @@ public class MobStatues extends JavaPlugin implements Listener, TabCompleter {
 			return;
 		}
 
-		if (entityType == null || !entityType.isAlive()) {
+		if (!entityType.isAlive()) {
 			player.sendMessage("Invalid entity name.");
 			return;
 		}
@@ -316,35 +264,48 @@ public class MobStatues extends JavaPlugin implements Listener, TabCompleter {
 		savePlayerStatuesData();
 	}
 
-	/**
-	 * Configures a newly spawned entity to function as a statue. It sets no visible name,
-	 * makes it invulnerable, removes AI, and stores the statue ID in its PersistentDataContainer.
-	 * @param entity The entity to set up as a statue.
-	 * @param statueId The unique statue ID to store.
-	 */
 	private void setupStatueEntity(LivingEntity entity, String statueId) {
+		boolean bait = isBaitStatueType(entity.getType());
+
 		entity.setPersistent(true);
-		entity.setInvulnerable(true);
+
+		if (entity instanceof Mob mob) {
+			mob.setRemoveWhenFarAway(false);
+		}
+
 		entity.setAI(false);
 		entity.setCollidable(false);
 		entity.setGravity(false);
 		entity.setSilent(true);
 		entity.setCustomNameVisible(false);
-		entity.setCustomName(null);
+
+		if (bait) {
+			entity.setInvulnerable(false);
+
+			if (entity.getCustomName() == null || entity.getCustomName().isEmpty()) {
+				entity.setCustomName("statue_" + statueId);
+			}
+		} else {
+			entity.setInvulnerable(true);
+			entity.setCustomName(null);
+		}
+
 		entity.getPersistentDataContainer().set(STATUE_ID_KEY, PersistentDataType.STRING, statueId);
+		statueHomeLocationMap.put(statueId, entity.getLocation().clone());
 
 		ArmorStand armorStand = entity.getWorld().spawn(entity.getLocation(), ArmorStand.class);
 		armorStand.setInvisible(true);
 		armorStand.setMarker(true);
+		armorStand.setSilent(true);
+		armorStand.setGravity(false);
+		armorStand.setInvulnerable(true);
+		armorStand.setPersistent(true);
+		armorStand.setCollidable(false);
 		entity.addPassenger(armorStand);
 	}
 
-	/**
-	 * Retrieves the statue ID from an entity's PersistentDataContainer.
-	 * @param entity The entity whose ID should be retrieved.
-	 * @return The statue ID or null if not found.
-	 */
 	private String getStatueId(Entity entity) {
+		if (entity == null) return null;
 		PersistentDataContainer pdc = entity.getPersistentDataContainer();
 		if (pdc.has(STATUE_ID_KEY, PersistentDataType.STRING)) {
 			return pdc.get(STATUE_ID_KEY, PersistentDataType.STRING);
@@ -352,22 +313,17 @@ public class MobStatues extends JavaPlugin implements Listener, TabCompleter {
 		return null;
 	}
 
-	/**
-	 * Attempts to remove a statue safely by simply removing the entity.
-	 * @param statue The entity representing the statue to remove.
-	 */
 	private void removeOldStatue(Entity statue) {
 		if (statue != null) {
 			preventItemDrops = true;
+			for (Entity passenger : statue.getPassengers()) {
+				passenger.remove();
+			}
 			statue.remove();
 			preventItemDrops = false;
 		}
 	}
 
-	/**
-	 * Handles the event of item spawning. If item drops are prevented, cancel the event.
-	 * @param event The item spawn event.
-	 */
 	@EventHandler
 	public void onItemSpawn(ItemSpawnEvent event) {
 		if (preventItemDrops) {
@@ -375,10 +331,55 @@ public class MobStatues extends JavaPlugin implements Listener, TabCompleter {
 		}
 	}
 
-	/**
-	 * Handles entity deaths. If a dead entity was a statue, remove it from memory and config.
-	 * @param event The entity death event.
-	 */
+	private Entity unwrapDamager(EntityDamageByEntityEvent event) {
+		Entity damager = event.getDamager();
+		if (damager instanceof Projectile projectile) {
+			Object shooter = projectile.getShooter();
+			if (shooter instanceof Entity shooterEntity) {
+				return shooterEntity;
+			}
+		}
+		return damager;
+	}
+
+	@EventHandler(ignoreCancelled = true)
+	public void onEntityDamage(EntityDamageEvent event) {
+		Entity victim = event.getEntity();
+		String statueId = getStatueId(victim);
+		if (statueId == null) return;
+
+		boolean bait = isBaitStatueType(victim.getType());
+
+		if (!bait) {
+			event.setCancelled(true);
+			return;
+		}
+
+		if (event instanceof EntityDamageByEntityEvent byEntity) {
+			Entity realDamager = unwrapDamager(byEntity);
+
+			if (realDamager instanceof Player) {
+				event.setCancelled(true);
+				return;
+			}
+
+			event.setDamage(0.0);
+
+			Location home = statueHomeLocationMap.get(statueId);
+			if (home != null) {
+				Bukkit.getScheduler().runTask(this, () -> {
+					if (victim.isValid()) {
+						victim.teleport(home);
+						victim.setVelocity(new Vector(0, 0, 0));
+					}
+				});
+			}
+			return;
+		}
+
+		event.setCancelled(true);
+	}
+
 	@EventHandler
 	public void onEntityDeath(EntityDeathEvent event) {
 		Entity entity = event.getEntity();
@@ -390,14 +391,10 @@ public class MobStatues extends JavaPlugin implements Listener, TabCompleter {
 			removeStatueFromMemory(playerId, statueName);
 			removeStatueFromConfig(playerId, statueName);
 			statueLookupMap.remove(statueId);
+			statueHomeLocationMap.remove(statueId);
 		}
 	}
 
-	/**
-	 * Removes a statue from memory structures but not from the world (the entity may already be dead).
-	 * @param playerId The player's UUID who owns the statue.
-	 * @param statueName The name of the statue.
-	 */
 	private void removeStatueFromMemory(UUID playerId, String statueName) {
 		Object2ObjectOpenHashMap<String, Entity> playerStatues = getPlayerStatues(playerId);
 		if (playerStatues != null) {
@@ -406,16 +403,12 @@ public class MobStatues extends JavaPlugin implements Listener, TabCompleter {
 				String statueId = getStatueId(statue);
 				if (statueId != null) {
 					statueLookupMap.remove(statueId);
+					statueHomeLocationMap.remove(statueId);
 				}
 			}
 		}
 	}
 
-	/**
-	 * Removes a statue's record from the player's data file (YAML configuration).
-	 * @param playerId The player's UUID who owns the statue.
-	 * @param statueName The name of the statue.
-	 */
 	private void removeStatueFromConfig(UUID playerId, String statueName) {
 		File playersDataFolder = new File(getDataFolder(), "players");
 		File playerDataFile = new File(playersDataFolder, playerId.toString() + ".yml");
@@ -434,13 +427,6 @@ public class MobStatues extends JavaPlugin implements Listener, TabCompleter {
 		}
 	}
 
-	/**
-	 * Moves a statue to the player's current location. It first removes the old statue,
-	 * then creates a new one at the player's position.
-	 * @param player The player who owns the statue.
-	 * @param statueName The name of the statue.
-	 * @return True if successful, false otherwise.
-	 */
 	private boolean moveStatue(Player player, String statueName) {
 		Object2ObjectOpenHashMap<String, Entity> playerStatues = getPlayerStatues(player.getUniqueId());
 		if (playerStatues != null) {
@@ -449,15 +435,23 @@ public class MobStatues extends JavaPlugin implements Listener, TabCompleter {
 				String oldStatueId = getStatueId(livingEntity);
 				Location location = player.getLocation();
 				removeOldStatue(livingEntity);
+
 				createStatue(player, statueName, livingEntity.getType().name());
+
 				Entity newStatue = getPlayerStatues(player.getUniqueId()).get(statueName);
 				if (newStatue instanceof LivingEntity newLivingEntity) {
 					newLivingEntity.teleport(location);
+
 					String newId = getStatueId(newLivingEntity);
-					if (newId != null) statueLookupMap.remove(newId);
+					if (newId != null) {
+						statueLookupMap.remove(newId);
+						statueHomeLocationMap.remove(newId);
+					}
+
 					if (oldStatueId != null) {
 						newLivingEntity.getPersistentDataContainer().set(STATUE_ID_KEY, PersistentDataType.STRING, oldStatueId);
 						statueLookupMap.put(oldStatueId, new StatueInfo(player.getUniqueId(), statueName));
+						statueHomeLocationMap.put(oldStatueId, newLivingEntity.getLocation().clone());
 					}
 					return true;
 				}
@@ -466,10 +460,6 @@ public class MobStatues extends JavaPlugin implements Listener, TabCompleter {
 		return false;
 	}
 
-	/**
-	 * Removes all statues from the server and clears all data structures.
-	 * Called when the plugin is disabled.
-	 */
 	private void removeAllStatues() {
 		for (Long2ObjectOpenHashMap<Object2ObjectOpenHashMap<String, Entity>> secondMap : playerStatueMap.values()) {
 			for (Object2ObjectOpenHashMap<String, Entity> playerStatues : secondMap.values()) {
@@ -478,6 +468,10 @@ public class MobStatues extends JavaPlugin implements Listener, TabCompleter {
 						String statueId = getStatueId(statue);
 						if (statueId != null) {
 							statueLookupMap.remove(statueId);
+							statueHomeLocationMap.remove(statueId);
+						}
+						for (Entity passenger : statue.getPassengers()) {
+							passenger.remove();
 						}
 						statue.remove();
 					}
@@ -487,13 +481,9 @@ public class MobStatues extends JavaPlugin implements Listener, TabCompleter {
 			secondMap.clear();
 		}
 		playerStatueMap.clear();
+		statueHomeLocationMap.clear();
 	}
 
-	/**
-	 * Removes a statue from both in-memory structures and the world by its name for a given player.
-	 * @param playerId The player's UUID who owns the statue.
-	 * @param statueName The name of the statue.
-	 */
 	private void removeStatue(UUID playerId, String statueName) {
 		Object2ObjectOpenHashMap<String, Entity> playerStatues = getPlayerStatues(playerId);
 		if (playerStatues != null) {
@@ -502,17 +492,13 @@ public class MobStatues extends JavaPlugin implements Listener, TabCompleter {
 				String statueId = getStatueId(statue);
 				if (statueId != null) {
 					statueLookupMap.remove(statueId);
+					statueHomeLocationMap.remove(statueId);
 				}
 				removeOldStatue(statue);
 			}
 		}
 	}
 
-	/**
-	 * Handles the /msdel command logic. Removes the specified statue from the player's inventory and config.
-	 * @param sender The command sender.
-	 * @param statueName The name of the statue to remove.
-	 */
 	private void removeStatueCommand(CommandSender sender, String statueName) {
 		if (!(sender instanceof Player player)) {
 			sender.sendMessage("This command can only be used by players.");
@@ -538,6 +524,7 @@ public class MobStatues extends JavaPlugin implements Listener, TabCompleter {
 		String statueId = getStatueId(statue);
 		if (statueId != null) {
 			statueLookupMap.remove(statueId);
+			statueHomeLocationMap.remove(statueId);
 		}
 		removeOldStatue(statue);
 
@@ -559,32 +546,22 @@ public class MobStatues extends JavaPlugin implements Listener, TabCompleter {
 		sender.sendMessage("Statue '" + statueName + "' removed.");
 	}
 
-	/**
-	 * Lists all statues owned by a given player.
-	 * @param playerId The UUID of the player.
-	 */
 	private void listPlayerStatues(UUID playerId) {
 		Object2ObjectOpenHashMap<String, Entity> playerStatues = getPlayerStatues(playerId);
+		Player player = Bukkit.getPlayer(playerId);
+
+		if (player == null) return;
+
 		if (playerStatues != null && !playerStatues.isEmpty()) {
-			Player player = Bukkit.getPlayer(playerId);
-			if (player != null) {
-				player.sendMessage("Your statues:");
-				for (String name : playerStatues.keySet()) {
-					player.sendMessage("- " + name);
-				}
+			player.sendMessage("Your statues:");
+			for (String name : playerStatues.keySet()) {
+				player.sendMessage("- " + name);
 			}
 		} else {
-			Player player = Bukkit.getPlayer(playerId);
-			if (player != null) {
-				player.sendMessage("You don't have any statues.");
-			}
+			player.sendMessage("You don't have any statues.");
 		}
 	}
 
-	/**
-	 * Loads all player statue data from files on plugin startup.
-	 * Reconstructs the maps and registers them in memory.
-	 */
 	private void loadPlayerStatuesData() {
 		File playersDataFolder = new File(getDataFolder(), "players");
 		if (!playersDataFolder.exists()) {
@@ -629,13 +606,6 @@ public class MobStatues extends JavaPlugin implements Listener, TabCompleter {
 		}
 	}
 
-	/**
-	 * Ensures that any statue missing the "entityName" config field is assigned one.
-	 * This updates the configuration file if needed.
-	 * @param playerDataConfig The player's data configuration.
-	 * @param playerStatues The statues owned by the player.
-	 * @return True if updates were made, false otherwise.
-	 */
 	private boolean updateStatueData(FileConfiguration playerDataConfig, Object2ObjectOpenHashMap<String, Entity> playerStatues) {
 		boolean hasUpdates = false;
 		for (String statueName : playerStatues.keySet()) {
@@ -650,11 +620,6 @@ public class MobStatues extends JavaPlugin implements Listener, TabCompleter {
 		return hasUpdates;
 	}
 
-	/**
-	 * Saves the player's updated data configuration to disk.
-	 * @param playerDataFile The file to save to.
-	 * @param playerDataConfig The configuration to save.
-	 */
 	private void savePlayerData(File playerDataFile, FileConfiguration playerDataConfig) {
 		try {
 			playerDataConfig.save(playerDataFile);
@@ -664,28 +629,23 @@ public class MobStatues extends JavaPlugin implements Listener, TabCompleter {
 		}
 	}
 
-	/**
-	 * Loads a single statue from the player's configuration file.
-	 * Spawns and configures the entity as a statue.
-	 * @param playerId The UUID of the player who owns the statue.
-	 * @param statueName The name of the statue.
-	 * @param statueSection The configuration section for this statue.
-	 * @return The spawned statue entity or null on failure.
-	 */
 	private Entity loadStatueFromConfig(UUID playerId, String statueName, ConfigurationSection statueSection) {
 		if (statueSection == null) {
 			return null;
 		}
+
 		String worldName = statueSection.getString("world");
 		double x = statueSection.getDouble("x");
 		double y = statueSection.getDouble("y");
 		double z = statueSection.getDouble("z");
 		float yaw = (float) statueSection.getDouble("yaw");
 		float pitch = (float) statueSection.getDouble("pitch");
+
 		if (Bukkit.getWorld(worldName) == null) {
 			return null;
 		}
 		Location location = new Location(Bukkit.getWorld(worldName), x, y, z, yaw, pitch);
+
 		EntityType entityType;
 		try {
 			entityType = EntityType.valueOf(statueSection.getString("entityType"));
@@ -693,19 +653,10 @@ public class MobStatues extends JavaPlugin implements Listener, TabCompleter {
 			getLogger().warning("Invalid entity type for statue '" + statueName + "'.");
 			return null;
 		}
-		if (entityType == null || !entityType.isAlive()) {
+		if (!entityType.isAlive()) {
 			getLogger().warning("Invalid entity type for statue '" + statueName + "'.");
 			return null;
 		}
-
-		LivingEntity entity = (LivingEntity) location.getWorld().spawnEntity(location, entityType);
-		entity.setInvulnerable(true);
-		entity.setAI(false);
-		entity.setCollidable(false);
-		entity.setGravity(false);
-		entity.setSilent(true);
-		entity.setCustomNameVisible(false);
-		entity.setCustomName(null);
 
 		String customNameKey = "entityName";
 		String statueId = statueSection.getString(customNameKey);
@@ -726,19 +677,14 @@ public class MobStatues extends JavaPlugin implements Listener, TabCompleter {
 			}
 		}
 
-		entity.getPersistentDataContainer().set(STATUE_ID_KEY, PersistentDataType.STRING, statueId);
-
-		ArmorStand armorStand = location.getWorld().spawn(location, ArmorStand.class);
-		armorStand.setInvisible(true);
-		armorStand.setMarker(true);
-		entity.addPassenger(armorStand);
+		LivingEntity entity = (LivingEntity) location.getWorld().spawnEntity(location, entityType);
+		setupStatueEntity(entity, statueId);
+		entity.teleport(location);
+		statueHomeLocationMap.put(statueId, entity.getLocation().clone());
 
 		return entity;
 	}
 
-	/**
-	 * Saves all currently loaded player statues back to their respective configuration files.
-	 */
 	private void savePlayerStatuesData() {
 		File playersDataFolder = new File(getDataFolder(), "players");
 		if (!playersDataFolder.exists()) {
@@ -750,10 +696,12 @@ public class MobStatues extends JavaPlugin implements Listener, TabCompleter {
 			for (long lsb : secondMap.keySet()) {
 				Object2ObjectOpenHashMap<String, Entity> playerStatues = secondMap.get(lsb);
 				if (playerStatues == null) continue;
+
 				UUID playerId = new UUID(msb, lsb);
 				File playerDataFile = new File(playersDataFolder, playerId.toString() + ".yml");
 				FileConfiguration playerDataConfig = YamlConfiguration.loadConfiguration(playerDataFile);
 				ConfigurationSection statuesSection = playerDataConfig.createSection("statues");
+
 				for (String name : playerStatues.keySet()) {
 					Entity statue = playerStatues.get(name);
 					if (statue instanceof LivingEntity livingEntity) {
@@ -770,11 +718,6 @@ public class MobStatues extends JavaPlugin implements Listener, TabCompleter {
 		}
 	}
 
-	/**
-	 * Saves a single statue's state (location, type, ID) into a configuration section.
-	 * @param entity The statue entity.
-	 * @param statueSection The configuration section to write into.
-	 */
 	private void saveStatueToConfig(LivingEntity entity, ConfigurationSection statueSection) {
 		statueSection.set("world", entity.getWorld().getName());
 		statueSection.set("x", entity.getLocation().getX());
@@ -783,16 +726,13 @@ public class MobStatues extends JavaPlugin implements Listener, TabCompleter {
 		statueSection.set("yaw", entity.getLocation().getYaw());
 		statueSection.set("pitch", entity.getLocation().getPitch());
 		statueSection.set("entityType", entity.getType().name());
+
 		String statueId = getStatueId(entity);
 		if (statueId != null) {
 			statueSection.set("entityName", statueId);
 		}
 	}
 
-	/**
-	 * Generates a random 16-character alphanumeric string.
-	 * @return A randomly generated string.
-	 */
 	private String generateRandomName() {
 		StringBuilder sb = NAME_BUILDER.get();
 		sb.setLength(0);
@@ -879,10 +819,6 @@ public class MobStatues extends JavaPlugin implements Listener, TabCompleter {
 		return completions;
 	}
 
-	/**
-	 * A simple data class that stores the player's UUID and the statue name
-	 * for quick reverse lookups based on the statue ID.
-	 */
 	private static final class StatueInfo {
 		private final UUID playerId;
 		private final String statueName;
