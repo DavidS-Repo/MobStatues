@@ -9,6 +9,7 @@ import org.bukkit.Bukkit;
 import org.bukkit.Chunk;
 import org.bukkit.Location;
 import org.bukkit.NamespacedKey;
+import org.bukkit.World;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandSender;
 import org.bukkit.command.TabCompleter;
@@ -39,12 +40,17 @@ import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 
 public class MobStatues extends JavaPlugin implements Listener, TabCompleter {
+
 	private final Long2ObjectOpenHashMap<Long2ObjectOpenHashMap<Object2ObjectOpenHashMap<String, Entity>>> playerStatueMap = new Long2ObjectOpenHashMap<>();
 	private final Object2ObjectOpenHashMap<String, StatueInfo> statueLookupMap = new Object2ObjectOpenHashMap<>();
+
 	private final Object2ObjectOpenHashMap<String, Location> statueHomeLocationMap = new Object2ObjectOpenHashMap<>();
+
 	private boolean preventItemDrops = false;
+
 	private static final char[] CHARACTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789".toCharArray();
 	private static final ThreadLocal<StringBuilder> NAME_BUILDER = ThreadLocal.withInitial(() -> new StringBuilder(16));
+
 	private NamespacedKey STATUE_ID_KEY;
 
 	@Override
@@ -239,6 +245,7 @@ public class MobStatues extends JavaPlugin implements Listener, TabCompleter {
 
 	private void createStatue(Player player, String statueName, String entityName) {
 		removeStatue(player.getUniqueId(), statueName);
+
 		EntityType entityType;
 		try {
 			entityType = EntityType.valueOf(entityName);
@@ -281,7 +288,6 @@ public class MobStatues extends JavaPlugin implements Listener, TabCompleter {
 
 		if (bait) {
 			entity.setInvulnerable(false);
-
 			if (entity.getCustomName() == null || entity.getCustomName().isEmpty()) {
 				entity.setCustomName("statue_" + statueId);
 			}
@@ -355,6 +361,13 @@ public class MobStatues extends JavaPlugin implements Listener, TabCompleter {
 			return;
 		}
 
+		EntityDamageEvent.DamageCause cause = event.getCause();
+		if (cause == EntityDamageEvent.DamageCause.SUICIDE
+				|| cause == EntityDamageEvent.DamageCause.CUSTOM
+				|| cause == EntityDamageEvent.DamageCause.VOID) {
+			return;
+		}
+
 		if (event instanceof EntityDamageByEntityEvent byEntity) {
 			Entity realDamager = unwrapDamager(byEntity);
 
@@ -376,7 +389,6 @@ public class MobStatues extends JavaPlugin implements Listener, TabCompleter {
 			}
 			return;
 		}
-
 		event.setCancelled(true);
 	}
 
@@ -384,7 +396,16 @@ public class MobStatues extends JavaPlugin implements Listener, TabCompleter {
 	public void onEntityDeath(EntityDeathEvent event) {
 		Entity entity = event.getEntity();
 		String statueId = getStatueId(entity);
-		if (statueId != null && statueLookupMap.containsKey(statueId)) {
+		if (statueId == null) return;
+
+		event.getDrops().clear();
+		event.setDroppedExp(0);
+
+		for (Entity passenger : entity.getPassengers()) {
+			passenger.remove();
+		}
+
+		if (statueLookupMap.containsKey(statueId)) {
 			StatueInfo info = statueLookupMap.get(statueId);
 			UUID playerId = info.playerId();
 			String statueName = info.statueName();
@@ -392,7 +413,11 @@ public class MobStatues extends JavaPlugin implements Listener, TabCompleter {
 			removeStatueFromConfig(playerId, statueName);
 			statueLookupMap.remove(statueId);
 			statueHomeLocationMap.remove(statueId);
+			return;
 		}
+
+		statueHomeLocationMap.remove(statueId);
+		removeStatueIdFromAllConfigs(statueId);
 	}
 
 	private void removeStatueFromMemory(UUID playerId, String statueName) {
@@ -486,17 +511,138 @@ public class MobStatues extends JavaPlugin implements Listener, TabCompleter {
 
 	private void removeStatue(UUID playerId, String statueName) {
 		Object2ObjectOpenHashMap<String, Entity> playerStatues = getPlayerStatues(playerId);
-		if (playerStatues != null) {
-			Entity statue = playerStatues.remove(statueName);
-			if (statue != null) {
-				String statueId = getStatueId(statue);
-				if (statueId != null) {
-					statueLookupMap.remove(statueId);
-					statueHomeLocationMap.remove(statueId);
+		if (playerStatues == null) return;
+
+		Entity cached = playerStatues.get(statueName);
+		Entity statue = resolveStatueEntity(playerId, statueName, cached);
+
+		if (statue != null) {
+			String statueId = getStatueId(statue);
+			if (statueId != null) {
+				statueLookupMap.remove(statueId);
+				statueHomeLocationMap.remove(statueId);
+			}
+			removeOldStatue(statue);
+		}
+
+		playerStatues.remove(statueName);
+	}
+
+	private Entity resolveStatueEntity(UUID playerId, String statueName, Entity cached) {
+		if (cached != null && cached.isValid()) {
+			return cached;
+		}
+
+		File playersDataFolder = new File(getDataFolder(), "players");
+		File playerDataFile = new File(playersDataFolder, playerId.toString() + ".yml");
+		if (!playerDataFile.exists()) {
+			return null;
+		}
+
+		FileConfiguration playerDataConfig = YamlConfiguration.loadConfiguration(playerDataFile);
+		ConfigurationSection statueSection = playerDataConfig.getConfigurationSection("statues." + statueName);
+		if (statueSection == null) {
+			return null;
+		}
+
+		String worldName = statueSection.getString("world");
+		if (worldName == null || worldName.isEmpty()) {
+			return null;
+		}
+
+		World world = Bukkit.getWorld(worldName);
+		if (world == null) {
+			return null;
+		}
+
+		double x = statueSection.getDouble("x");
+		double y = statueSection.getDouble("y");
+		double z = statueSection.getDouble("z");
+		String wantedId = statueSection.getString("entityName");
+
+		Location loc = new Location(world, x, y, z);
+
+		Chunk chunk = loc.getChunk();
+		if (!chunk.isLoaded()) {
+			chunk.load();
+		}
+
+		if (wantedId != null && !wantedId.isEmpty()) {
+			for (Entity e : chunk.getEntities()) {
+				String id = getStatueId(e);
+				if (id != null && id.equals(wantedId)) {
+					return e;
 				}
-				removeOldStatue(statue);
+			}
+
+			for (Entity e : world.getNearbyEntities(loc, 3.5, 3.5, 3.5)) {
+				String id = getStatueId(e);
+				if (id != null && id.equals(wantedId)) {
+					return e;
+				}
 			}
 		}
+
+		return null;
+	}
+
+	private Entity findNearestStatueEntity(Player player, double radius) {
+		Location base = player.getLocation();
+		Entity closest = null;
+		double best = Double.MAX_VALUE;
+
+		for (Entity e : player.getWorld().getNearbyEntities(base, radius, radius, radius)) {
+			String id = getStatueId(e);
+			if (id == null) continue;
+
+			double dist = e.getLocation().distanceSquared(base);
+			if (dist < best) {
+				best = dist;
+				closest = e;
+			}
+		}
+
+		return closest;
+	}
+
+	private boolean removeStatueIdFromAllConfigs(String statueId) {
+		File playersDataFolder = new File(getDataFolder(), "players");
+		if (!playersDataFolder.exists()) return false;
+
+		File[] files = playersDataFolder.listFiles((dir, name) -> name.endsWith(".yml"));
+		if (files == null) return false;
+
+		boolean removedAny = false;
+
+		for (File f : files) {
+			boolean changedThisFile = false;
+			FileConfiguration cfg = YamlConfiguration.loadConfiguration(f);
+			ConfigurationSection statues = cfg.getConfigurationSection("statues");
+			if (statues == null) continue;
+
+			for (String statueName : statues.getKeys(false)) {
+				ConfigurationSection sec = statues.getConfigurationSection(statueName);
+				if (sec == null) continue;
+
+				String id = sec.getString("entityName");
+				if (id != null && id.equals(statueId)) {
+					statues.set(statueName, null);
+					changedThisFile = true;
+					removedAny = true;
+				}
+			}
+
+			if (changedThisFile) {
+				try {
+					cfg.save(f);
+				} catch (IOException e) {
+					getLogger().warning("Failed to save player data for file: " + f.getName());
+					e.printStackTrace();
+				}
+			}
+		}
+
+		return removedAny;
 	}
 
 	private void removeStatueCommand(CommandSender sender, String statueName) {
@@ -504,29 +650,52 @@ public class MobStatues extends JavaPlugin implements Listener, TabCompleter {
 			sender.sendMessage("This command can only be used by players.");
 			return;
 		}
+
 		UUID playerId = player.getUniqueId();
 		Object2ObjectOpenHashMap<String, Entity> playerStatues = getPlayerStatues(playerId);
+
 		if (playerStatues == null) {
 			sender.sendMessage("You don't have any statues.");
 			return;
 		}
-		Entity statue = playerStatues.remove(statueName);
+
+		Entity cached = playerStatues.get(statueName);
+		Entity statue = resolveStatueEntity(playerId, statueName, cached);
+
 		if (statue == null) {
-			sender.sendMessage("You don't have a statue named '" + statueName + "'.");
+			Entity nearest = findNearestStatueEntity(player, 6.0);
+			if (nearest == null) {
+				sender.sendMessage("Could not find that statue in the world right now. Try standing closer to it and run /msdel again.");
+				return;
+			}
+
+			String foundId = getStatueId(nearest);
+			if (foundId != null) {
+				statueLookupMap.remove(foundId);
+				statueHomeLocationMap.remove(foundId);
+				removeStatueIdFromAllConfigs(foundId);
+			}
+
+			removeOldStatue(nearest);
+			sender.sendMessage("Removed the nearest statue near you.");
 			return;
 		}
+
 		Location statueLocation = statue.getLocation();
 		Chunk chunk = statueLocation.getChunk();
 		if (!chunk.isLoaded()) {
-			sender.sendMessage("Warning: The chunk containing the statue is not loaded. The statue will not be removed.");
-			return;
+			chunk.load();
 		}
+
 		String statueId = getStatueId(statue);
 		if (statueId != null) {
 			statueLookupMap.remove(statueId);
 			statueHomeLocationMap.remove(statueId);
 		}
+
 		removeOldStatue(statue);
+
+		playerStatues.remove(statueName);
 
 		File playersDataFolder = new File(getDataFolder(), "players");
 		File playerDataFile = new File(playersDataFolder, playerId.toString() + ".yml");
@@ -543,6 +712,7 @@ public class MobStatues extends JavaPlugin implements Listener, TabCompleter {
 				}
 			}
 		}
+
 		sender.sendMessage("Statue '" + statueName + "' removed.");
 	}
 
